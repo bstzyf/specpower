@@ -114,4 +114,106 @@ describe('applyDeltaSpec', () => {
 
     expect(() => applyDeltaSpec(mainSpec, delta)).toThrow('not found');
   });
+
+  // -------------------------------------------------------------------------
+  // Negative test coverage — strict validation of inconsistent requirement state
+  // (see prompts/reference/specpower/negative-testing-guide.md)
+  // -------------------------------------------------------------------------
+
+  it('throws when ADDED targets a requirement that already exists (error path)', async () => {
+    const mainSpec = await loadFixture('main-spec.md');
+    const delta = [
+      '## ADDED Requirements',
+      '',
+      '### Requirement: User Login',
+      'Duplicate entry.',
+      '',
+      '#### Scenario: Duplicate',
+      '- **WHEN** added again',
+      '- **THEN** should be rejected',
+    ].join('\n');
+
+    expect(() => applyDeltaSpec(mainSpec, delta)).toThrow('already exists');
+  });
+
+  it('throws when REMOVED targets a non-existent requirement (error path)', async () => {
+    const mainSpec = await loadFixture('main-spec.md');
+    const delta = [
+      '## REMOVED Requirements',
+      '',
+      '### Requirement: Nonexistent Feature',
+      '**Reason**: Not used.',
+      '**Migration**: None.',
+    ].join('\n');
+
+    expect(() => applyDeltaSpec(mainSpec, delta)).toThrow('not found');
+  });
+
+  it('throws when RENAMED targets a non-existent FROM (error path)', async () => {
+    const mainSpec = await loadFixture('main-spec.md');
+    const delta = [
+      '## RENAMED Requirements',
+      '',
+      'FROM: Nonexistent',
+      'TO: New Name',
+    ].join('\n');
+
+    expect(() => applyDeltaSpec(mainSpec, delta)).toThrow('not found');
+  });
+
+  it('empty delta (no sections) returns main spec unchanged (boundary)', async () => {
+    const mainSpec = await loadFixture('main-spec.md');
+    const result = applyDeltaSpec(mainSpec, '');
+
+    expect(countRequirements(result)).toBe(3);
+    expect(result).toContain('User Login');
+  });
+
+  it('removing the only requirement leaves an empty spec (boundary)', () => {
+    const singleReqSpec = [
+      '### Requirement: Only Feature',
+      'The system SHALL do one thing.',
+      '',
+      '#### Scenario: Only scenario',
+      '- **WHEN** triggered',
+      '- **THEN** works',
+    ].join('\n');
+
+    const delta = [
+      '## REMOVED Requirements',
+      '',
+      '### Requirement: Only Feature',
+      '**Reason**: Removed.',
+      '**Migration**: None.',
+    ].join('\n');
+
+    const result = applyDeltaSpec(singleReqSpec, delta);
+
+    expect(countRequirements(result)).toBe(0);
+    expect(result.trim()).toBe('');
+  });
+
+  it('empty main spec with ADDED produces only the new block (empty state)', () => {
+    const delta = [
+      '## ADDED Requirements',
+      '',
+      '### Requirement: Brand New',
+      'New requirement.',
+      '',
+      '#### Scenario: New behavior',
+      '- **WHEN** triggered',
+      '- **THEN** works',
+    ].join('\n');
+
+    const result = applyDeltaSpec('', delta);
+
+    expect(countRequirements(result)).toBe(1);
+    expect(result).toContain('Brand New');
+  });
+
+  it('empty main spec with empty delta returns empty string (empty + empty)', () => {
+    const result = applyDeltaSpec('', '');
+
+    expect(result.trim()).toBe('');
+  });
 });

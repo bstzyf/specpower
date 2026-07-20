@@ -6,3 +6,4 @@ dist/
 # Not part of the published package. Contributors who want to use OpenSpec
 # for working on specPower can run `openspec init` locally.
 .claude/
+*.class

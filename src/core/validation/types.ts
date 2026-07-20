@@ -9,7 +9,13 @@ export interface ValidationError {
   readonly line?: number;
 }
 
+export interface ValidationWarning {
+  readonly message: string;
+  readonly line?: number;
+}
+
 export interface ValidationResult {
   readonly valid: boolean;
   readonly errors: readonly ValidationError[];
+  readonly warnings: readonly ValidationWarning[];
 }

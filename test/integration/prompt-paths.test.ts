@@ -10,7 +10,7 @@
 
 import { describe, it, expect } from 'vitest';
 import { promises as fs } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { join, resolve, basename, dirname } from 'node:path';
 import { existsSync } from 'node:fs';
 
 // ---------------------------------------------------------------------------
@@ -88,9 +88,7 @@ describe('Prompt path integrity', () => {
         const absolutePath = join(PROMPTS_DIR, relativePath);
 
         if (!existsSync(absolutePath)) {
-          const skillName = skillFile
-            .replace(SKILLS_DIR, '')
-            .replace(/^\//, '');
+          const skillName = basename(dirname(skillFile));
           errors.push(
             `${skillName} references missing prompt: prompts/${relativePath}`,
           );
@@ -117,9 +115,7 @@ describe('Prompt path integrity', () => {
       const content = await fs.readFile(skillFile, 'utf-8');
       const promptPaths = extractPromptPaths(content);
 
-      const skillDirName = skillFile
-        .split('/')
-        .slice(-2, -1)[0];
+      const skillDirName = basename(dirname(skillFile));
 
       if (noPromptSkills.has(skillDirName)) {
         continue;

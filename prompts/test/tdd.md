@@ -99,7 +99,13 @@ Test individual functions, utilities, and components in isolation.
 - One behavior per test
 - No external dependencies (mock at boundaries only)
 - Fast execution (milliseconds per test)
-- Cover: happy path, edge cases, error conditions, boundary values
+- Cover ALL test types per function/method:
+  - **Happy path**: valid inputs → correct output
+  - **Legitimate boundary** (positive): edge values that are still valid inputs — empty array, single element, extreme values, large inputs. Verify correct behavior at edges. These are POSITIVE tests.
+  - **Error path** (negative): contract-violating inputs → proper error/rejection (wrong type, out-of-range, malformed, null where forbidden)
+  - **Invalid state** (negative): wrong operation order, unmet precondition
+- **Note**: "empty"/"boundary"/"large" are negative ONLY if they violate the contract or trigger abnormal handling; if valid input, they're positive. See `prompts/reference/specpower/negative-testing-guide.md`.
+- **Target ratio**: ≥ 30% negative for functions with side effects/state/IO; pure functions may be lower (15-30%) — don't pad with legitimate-boundary tests.
 
 ### Level 2: Integration Tests
 
@@ -148,6 +154,7 @@ Target 80%+ overall coverage with this distribution:
 | Integration | Key interaction paths | API endpoints, DB operations |
 | E2E | Critical user flows | Login, checkout, core features |
 | Regression | Every fixed bug | Bug-specific reproduction |
+| Negative | ≥ 30% (side-effect funcs); 15-30% (pure funcs) | Contract violations, invalid state, resource-exhausted-to-failure |
 
 ## Good Tests
 
@@ -205,6 +212,7 @@ Before marking test suite complete:
 - [ ] Output pristine (no errors, warnings)
 - [ ] Tests use real code (mocks only if unavoidable)
 - [ ] Edge cases and errors covered
+- [ ] Negative tests cover all contract-violating inputs; legitimate-boundary tests (empty/extreme/large valid inputs) counted as positive
 - [ ] Unit tests cover business logic (90%+)
 - [ ] Integration tests cover key interaction paths
 - [ ] E2E tests cover critical user flows

@@ -170,6 +170,16 @@ Before finalizing atomic tasks within a group, confirm which files will be creat
 
 - [ ] **Step 1: Write the failing test**
 
+> **Step 1 MUST include both positive and negative test cases.** For each function/method:
+> - Write ≥ 1 positive test (happy path), including legitimate boundary values (empty array, extreme values, large input) if the function accepts them — these are positive.
+> - Write ≥ 1 negative test from these **contract-violating** categories (pick relevant ones):
+>   - Invalid input (wrong type, out-of-range, malformed)
+>   - null / undefined **where the contract forbids them** (NOT "empty collection" — empty is negative only if it violates the contract)
+>   - Invalid state (wrong operation order, unmet precondition)
+>   - Resource exhaustion to failure (timeout, disk full)
+> - Target: ≥ 30% negative for side-effect functions; pure functions may be lower (15-30%) — do NOT pad by reclassifying legitimate-boundary tests as negative.
+> - See `prompts/reference/specpower/negative-testing-guide.md` for the positive/negative distinction.
+
 ```python
 def test_specific_behavior():
     result = function(input)
@@ -220,6 +230,7 @@ The rule of thumb: if a fresh engineer cloned the repo, installed deps, and copy
 Every step must contain the actual content an engineer needs. These are **plan failures** — never write them:
 - "TBD", "TODO", "implement later", "fill in details"
 - "Add appropriate error handling" / "add validation" / "handle edge cases"
+  → These are NOT allowed as placeholders. The underlying concerns MUST be addressed — each error handling scenario MUST appear as an explicit test step with concrete test code and a `Verify:` line. Do not collapse multiple error scenarios into a single "handle edge cases" step; enumerate each as its own atomic test.
 - "Write tests for the above" (without actual test code)
 - "Similar to Task N" (repeat the code — the engineer may be reading tasks out of order)
 - Steps that describe what to do without showing how (code blocks required for code steps)

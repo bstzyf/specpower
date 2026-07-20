@@ -18,6 +18,17 @@
 - **WHEN** <!-- condition -->
 - **THEN** <!-- expected outcome -->
 
+<!-- TIP: Every requirement SHOULD include at least one negative scenario covering a
+     contract-violating or abnormal input (error path: invalid type, null where forbidden,
+     permission denied; invalid state; resource exhaustion to failure).
+     NOTE: legitimate boundary values (empty array, extreme values, large input) are
+     POSITIVE scenarios if the function accepts them — do not count them as negative.
+     See negative-testing-guide.md for the positive/negative distinction. -->
+
+#### Scenario: <!-- error/boundary scenario name -->
+- **WHEN** <!-- invalid/boundary/empty condition -->
+- **THEN** <!-- error handling, rejection, or graceful degradation -->
+
 ## MODIFIED Requirements
 
 <!-- Include the FULL updated requirement block (not just the diff).
