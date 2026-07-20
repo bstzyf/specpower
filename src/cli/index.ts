@@ -9,6 +9,7 @@ import { registerChangePhaseCommand } from './commands/change-phase.js';
 import { registerInstructionsCommand } from './commands/instructions.js';
 import { registerValidateCommand } from './commands/validate.js';
 import { registerInitCommand } from './commands/init.js';
+import { registerSyncCommand } from './commands/sync.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -35,6 +36,7 @@ registerChangePhaseCommand(changeCmd);
 registerInstructionsCommand(program);
 registerValidateCommand(program);
 registerInitCommand(program);
+registerSyncCommand(program);
 
 program.exitOverride();
 

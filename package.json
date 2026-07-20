@@ -1,6 +1,6 @@
 {
   "name": "specpower",
-  "version": "0.2.2",
+  "version": "0.2.3-0",
   "type": "module",
   "description": "Unified spec-driven development for Claude Code: OpenSpec planning + Superpowers execution merged into one CLI + plugin",
   "keywords": [

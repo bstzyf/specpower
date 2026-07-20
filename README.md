@@ -89,13 +89,34 @@ specpower init
 
 这一步会：
 - 创建 `specpower/` 目录（存放 specs 和 changes）
-- 写入 `specpower/config.yaml`（项目上下文）
+- 写入 `specpower/config.yaml`（项目上下文 + `version:` 记录初始化时的包版本）
 - 在 `.claude/skills/specpower-*/` 生成 10 个技能文件
 - 在 `.claude/commands/specpower/` 生成 10 个斜杠命令别名
 - 在 `.claude/specpower/` 拷贝 prompts、schemas、templates
 - **自动追加** `.gitignore`，忽略可再生的 prompts/schemas/templates（幂等，不覆盖已有内容）
 
 init 后，打开 Claude Code 会话，斜杠命令 `/specpower:*` 立即可用。
+
+### 重复 init 会按版本漂移提示 sync
+
+`init` 写入 `config.yaml` 时会盖一个 `version:` 戳（初始化时安装的包版本）。重复执行 `init` 时，它检测到项目已初始化后，会比较**当前安装的包版本**与 `config.yaml` 里记录的版本：
+
+| 安装包 vs 记录版本 | 行为 |
+|---|---|
+| 相等（`equal`） | 不做事，直接提示"已初始化" |
+| 更新（`newer`） | 提示「是否运行 sync 刷新 skills？」——TTY 下交互 `[y/N]`，非 TTY（CI/管道）自动**不阻塞**、只打印提示 |
+| 未记录（`unknown`，老版本 init 的项目无 `version:` 字段） | 同 newer，提示 sync 以补盖版本戳 |
+| 更旧（`older`，装了旧版包） | 仅警告，**不自动 sync**（向下同步会让 skills 回退），建议重装匹配版本 |
+
+确认 sync 后，init 会调用 `specpower sync`（项目级）刷新 `.claude/` 资产并把 `config.yaml` 的 `version:` **外科手术式更新**为当前版本（保留注释），于是下次 init 看到 `equal`、不再重复提示。
+
+非交互场景一键接受：
+
+```bash
+specpower init -y      # 已初始化且装了新版时，直接 sync，不问
+```
+
+> 注意：交互提示仅在 stdin 是 TTY 时出现；CI/脚本里要么用 `init -y`，要么单独跑 `specpower sync`。
 
 ### 重新初始化
 
@@ -106,6 +127,32 @@ specpower init
 ```
 
 （init 检测到已初始化会拒绝运行，避免误覆盖）
+
+### 升级时同步 skills：`specpower sync`
+
+`npm install -g specpower@latest` 只更新**全局包**里的 skills，不会自动改写你项目里那份 `init` 时拷贝的副本（那是静态文件）。要让新版本的 skills 生效，跑一次 `specpower sync`：
+
+```bash
+npm install -g specpower@latest   # 更新全局包
+specpower sync                    # 把新 skills 刷进当前项目，再 commit
+```
+
+`sync` 是**无守门**的强制刷新（不受"已初始化"拦截），会覆盖 `.claude/skills/specpower-*`、`.claude/commands/specpower/*`，并**清理已废弃**的旧技能目录/命令文件（被新版本删掉或改名的）。项目级（默认）还会一并刷新 `.claude/specpower/` 下的 prompts/schemas/templates，并把 `config.yaml` 的 `version:` 戳更新为当前包版本（保留注释），使下次 `init` 看到 `equal`、不再提示 sync。
+
+#### 两种安装模型
+
+sync 支持两种作用域，对应"skills 放哪一层"的两种取舍：
+
+| 模型 | 命令 | skills 写到 | 适用 |
+|---|---|---|---|
+| **C 项目级**（默认） | `specpower sync` | `<项目>/.claude/` | skills 进 git 团队共享、每项目可锁版本；升级后需 sync 再 commit |
+| **B 用户级** | `specpower sync --user` | `~/.claude/` | 个人多项目统一用最新版，不进 git、全机生效 |
+
+**C（项目级）**：skills 和 prompts 都在项目 `.claude/`，SKILL.md 里的 prompt 引用保持相对路径（`.claude/specpower/prompts/...`），按项目 cwd 解析。流程：`init`（一次）→ 升级 → `sync` → commit。
+
+**B（用户级）**：skills 装到 `~/.claude/skills/`，所有项目共用一份；`sync --user` 会把 SKILL.md 里的 prompt 引用**重写**为指向全局包的绝对路径（`<全局包>/prompts/...`），所以 prompts 不再逐用户拷贝，直接随 `npm install -g` 更新。注意：用户级 skills 不进 git，团队各人各自 `sync --user`；且全机所有项目统一吃同一版本，无法按项目锁版本。
+
+> 选哪种？要 skills 进仓库给团队共享、按项目锁版本 → C；个人多项目、想升级即生效、不靠 git 同步 → B。
 
 ---
 
