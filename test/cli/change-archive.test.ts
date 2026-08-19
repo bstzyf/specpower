@@ -61,6 +61,24 @@ async function createCompleteProject(
     'utf-8',
   );
 
+  // test-plan.md covering the delta scenario (required by the test-plan gate)
+  await fs.writeFile(
+    join(changeDir, 'test-plan.md'),
+    [
+      '# test-plan: my-change',
+      '',
+      '## Capability: auth',
+      '',
+      '### Requirement: Two Factor Auth → Scenario: Enable 2FA',
+      '',
+      '- **Case** T1: user enables 2FA [positive]',
+      '  - Input: enable2FA()',
+      '  - Expected: requires OTP',
+      '  - it(): enables [my-change-T1]',
+    ].join('\n'),
+    'utf-8',
+  );
+
   return root;
 }
 

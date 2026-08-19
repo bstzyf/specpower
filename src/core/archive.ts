@@ -8,6 +8,7 @@
  */
 
 import { promises as fs } from 'node:fs';
+import { existsSync } from 'node:fs';
 import { join, basename, relative } from 'node:path';
 import { validateSpec } from './validation/validator.js';
 import { applyDeltaSpec } from './specs-apply.js';
@@ -132,6 +133,27 @@ export async function archiveChange(
     };
   }
 
+  // 1b. test-plan gate: a testable change (delta specs contain ≥1 Scenario)
+  //     must have a test-plan.md before archiving. --force skips this gate.
+  if (!options.force) {
+    const testPlanPath = join(changeDir, 'test-plan.md');
+    if (!existsSync(testPlanPath)) {
+      let scenarioCount = 0;
+      for (const file of deltaFiles) {
+        const deltaContent = await fs.readFile(join(deltaSpecsDir, file), 'utf-8');
+        scenarioCount += countScenarios(deltaContent);
+      }
+      if (scenarioCount > 0) {
+        return {
+          success: false,
+          errors: [
+            `test-plan.md missing for testable change ${changeName}; run plan Stage 5b or pass --force`,
+          ],
+        };
+      }
+    }
+  }
+
   // 2. Validate each delta spec
   const allErrors: string[] = [];
 
@@ -196,4 +218,13 @@ export async function archiveChange(
     errors: [],
     archivePath: archiveDest,
   };
+}
+
+/**
+ * Count `#### Scenario:` header lines in markdown content. Used by the
+ * test-plan gate to decide whether a change is "testable" (has ≥1 scenario).
+ */
+function countScenarios(content: string): number {
+  const matches = content.match(/^####\s+Scenario:\s+.+$/gm);
+  return matches ? matches.length : 0;
 }

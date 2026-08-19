@@ -71,6 +71,22 @@ async function setupDeltaMergeProject(): Promise<string> {
     'utf-8',
   );
 
+  // test-plan.md (required by the test-plan gate for testable changes)
+  await fs.writeFile(
+    join(changeDir, 'test-plan.md'),
+    [
+      '## Capability: auth',
+      '',
+      '### Requirement: Email Export → Scenario: Successful export',
+      '',
+      '- **Case** T1: export [positive]',
+      '  - Input: clickExport()',
+      '  - Expected: email sent',
+      '  - it(): export works',
+    ].join('\n'),
+    'utf-8',
+  );
+
   // Delta spec: ADDED + MODIFIED + REMOVED
   await fs.writeFile(
     join(changeSpecsDir, 'auth.md'),

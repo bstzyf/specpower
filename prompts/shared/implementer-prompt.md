@@ -56,6 +56,25 @@ Task tool (general-purpose):
     - In existing codebases, follow established patterns. Improve code you're touching
       the way a good developer would, but don't restructure things outside your task.
 
+    ## Project Coding Standards (sync-baked)
+
+    The placeholder below is replaced at `specpower init`/`sync` time with the
+    concatenated contents of `specpower/custom/coding/` top-level .md (sorted
+    lexicographically; subdirectories and non-.md files ignored). If the
+    directory is empty or missing, it reads `none`. Do NOT read custom files at
+    runtime — they are already inlined here.
+
+    [CONTROLLER: paste coding rules here]
+
+    Follow the pasted conventions; they override general best-practice advice.
+    If a rule conflicts with the task spec, raise it as a concern
+    (DONE_WITH_CONCERNS) rather than silently ignoring either.
+
+    **D9 self-check:** If you see the literal `[CONTROLLER:` text still in this
+    prompt (sync bake missing/failed), report DONE_WITH_CONCERNS — do not treat
+    it as a rule, and do not silently proceed as if rules were absent.
+    (DONE_WITH_CONCERNS) rather than silently ignoring either.
+
     ## When You're in Over Your Head
 
     It is always OK to stop and say "this is too hard for me." Bad work is worse than
@@ -91,6 +110,7 @@ Task tool (general-purpose):
     - Did I avoid overbuilding (YAGNI)?
     - Did I only build what was requested?
     - Did I follow existing patterns in the codebase?
+    - Did I follow the Project Coding Standards pasted above (if any)?
 
     **Testing:**
     - Do tests actually verify behavior (not just mock behavior)?

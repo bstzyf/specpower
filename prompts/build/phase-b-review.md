@@ -44,6 +44,22 @@ Task tool (general-purpose):
 
 **Purpose:** Verify the implementation is well-built -- clean, tested, maintainable.
 
+**Before dispatch: custom review rules are sync-baked (no runtime fill).**
+Custom review rules are NOT read or filled by the controller at runtime — they
+are baked into the reviewer prompt's `Custom Standards` placeholder at
+`specpower init`/`sync` time by `bakeCustomIncludes` → `bakePrompts`. The
+placeholder is already replaced with the concatenated contents of
+`specpower/custom/review/` (or `none` if missing/empty). The controller just
+reads the baked prompt and dispatches. (In a worktree, `phase-b-worktree.md`
+setup runs `specpower sync` to regenerate the baked prompt.)
+
+**D11 residue check (REQUIRED before dispatch):** if any
+`specpower/custom/review/*.md` still contains an unresolved `!include`
+directive line (previous bake did not complete / never run — fail-fast policy
+leaves no `!include` lines on success), warn the user to run
+`specpower sync` before proceeding. Do not silently proceed with stale/unbaked
+rules.
+
 **Dispatch:**
 ```
 Task tool (general-purpose):

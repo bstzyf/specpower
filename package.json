@@ -1,6 +1,6 @@
 {
   "name": "specpower",
-  "version": "0.2.2",
+  "version": "0.2.3-5",
   "type": "module",
   "description": "Unified spec-driven development for Claude Code: OpenSpec planning + Superpowers execution merged into one CLI + plugin",
   "keywords": [
@@ -39,13 +39,15 @@
     "skills",
     "prompts",
     "schemas",
-    "templates"
+    "templates",
+    "custom"
   ],
   "scripts": {
     "build": "tsc",
     "clean": "rm -rf dist",
     "test": "vitest run",
     "test:watch": "vitest",
+    "postinstall": "node bin/postinstall-hint.js",
     "prepublishOnly": "npm run clean && npm run build && npm run test",
     "release:patch": "npm version patch && git push && git push --tags",
     "release:minor": "npm version minor && git push && git push --tags",
@@ -56,9 +58,6 @@
     "commander": "^13.1.0",
     "js-yaml": "^4.1.0",
     "zod": "^3.24.4"
-  },
-  "optionalDependencies": {
-    "code-review-graph": "github:tirth8205/code-review-graph"
   },
   "devDependencies": {
     "@types/js-yaml": "^4.0.9",

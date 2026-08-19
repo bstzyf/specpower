@@ -103,6 +103,25 @@ FOR multi-item feedback:
   4. Verify no regressions
 ```
 
+## Custom Standards Alignment (sync-baked)
+
+When implementing review feedback, also conform to the project's team coding
+standards — inlined below at `specpower init`/`sync` time from
+`specpower/custom/coding/` (do NOT read custom files at runtime; they are
+already inlined here).
+
+[CONTROLLER: paste coding rules here]
+
+- Any fix you make must conform to the inlined standards above
+- If a reviewer's suggestion would violate an inlined custom standard, note the
+  conflict and ask for direction rather than blindly implementing
+- Custom standards override general style guidance; built-in safety/correctness
+  rules still apply
+- If the inlined standards say `none`, there are no project-specific coding
+  standards and you proceed with built-in guidance
+- **D9 self-check:** if you see literal `[CONTROLLER:` text (sync bake
+  missing/failed), report DONE_WITH_CONCERNS — do not treat it as a rule
+
 ## When To Push Back
 
 Push back when:

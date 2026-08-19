@@ -3,6 +3,7 @@ import { promises as fs } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { archiveChange } from '../../src/core/archive.js';
+import { parseTestPlan } from '../../src/core/parsers/test-plan-parser.js';
 
 /**
  * Create a minimal project structure for archive tests.
@@ -62,6 +63,24 @@ async function createTestProject(): Promise<string> {
   await fs.writeFile(
     join(changeDir, '.specpower.yaml'),
     'schema: specpower\ncreated: "2026-04-25"\nphase: built\n',
+    'utf-8',
+  );
+
+  // test-plan.md covering the delta scenario (required by the test-plan gate)
+  await fs.writeFile(
+    join(changeDir, 'test-plan.md'),
+    [
+      '# test-plan: my-change',
+      '',
+      '## Capability: auth',
+      '',
+      '### Requirement: Two Factor Auth → Scenario: Enable 2FA',
+      '',
+      '- **Case** T1: user enables 2FA [positive]',
+      '  - Input: enable2FA()',
+      '  - Expected: requires OTP',
+      '  - it(): enables [my-change-T1]',
+    ].join('\n'),
     'utf-8',
   );
 
@@ -176,5 +195,84 @@ describe('archiveChange', () => {
     const metaPath = join(archiveDir, entries[0], '.specpower.yaml');
     const content = await fs.readFile(metaPath, 'utf-8');
     expect(content).toContain('phase: archived');
+  });
+
+  it('blocks archive of a testable change (has scenario) lacking test-plan.md [add-test-plan-artifact-T14]', async () => {
+    const root = await createTestProject();
+    // remove the test-plan.md so the change is testable (has scenarios) but
+    // lacks the required test-plan artifact
+    await fs.rm(join(root, 'specpower', 'changes', 'my-change', 'test-plan.md'));
+
+    const result = await archiveChange('my-change', root);
+    expect(result.success).toBe(false);
+    expect(result.errors.some((e) => /test-plan\.md missing/i.test(e))).toBe(true);
+
+    // original change dir still present (not moved)
+    const stillExists = await fs
+      .stat(join(root, 'specpower', 'changes', 'my-change'))
+      .then(() => true)
+      .catch(() => false);
+    expect(stillExists).toBe(true);
+  });
+
+  it('--force archives a testable change even without test-plan.md', async () => {
+    const root = await createTestProject();
+    await fs.rm(join(root, 'specpower', 'changes', 'my-change', 'test-plan.md'));
+
+    const result = await archiveChange('my-change', root, { force: true });
+    expect(result.success).toBe(true);
+  });
+
+  it('moves test-plan.md into archive and does NOT merge it into baseline [add-test-plan-artifact-T11]', async () => {
+    const root = await createTestProject();
+
+    // Add a test-plan.md alongside the delta spec in the change directory.
+    const changeDir = join(root, 'specpower', 'changes', 'my-change');
+    const testPlanContent = [
+      '# test-plan: my-change',
+      '',
+      '<!-- TP_UNMERGED_MARKER: this content must never reach baseline specs -->',
+      '',
+      '## Capability: auth',
+      '',
+      '### Requirement: Two Factor Auth → Scenario: Enable 2FA',
+      '',
+      '- **Case** T1: user enables 2FA [negative]',
+      '  - Input: enable2FA()',
+      '  - Expected: requires OTP',
+      "  - it(): throws on unknown [my-change-T1]",
+    ].join('\n');
+    await fs.writeFile(join(changeDir, 'test-plan.md'), testPlanContent, 'utf-8');
+
+    const result = await archiveChange('my-change', root);
+    expect(result.success).toBe(true);
+
+    // 1. test-plan.md moved to archive (rode along with the whole change dir).
+    const archiveDir = join(root, 'specpower', 'changes', 'archive');
+    const entries = await fs.readdir(archiveDir);
+    expect(entries.length).toBe(1);
+    const archivedTestPlan = join(archiveDir, entries[0], 'test-plan.md');
+    const movedContent = await fs.readFile(archivedTestPlan, 'utf-8');
+    expect(movedContent).toContain('TP_UNMERGED_MARKER');
+    expect(movedContent).toContain('# test-plan: my-change');
+
+    // 2. Baseline spec does NOT contain test-plan content (only the delta spec
+    //    requirement block is merged; test-plan.md is never merged).
+    const baselineSpec = await fs.readFile(
+      join(root, 'specpower', 'specs', 'auth.md'),
+      'utf-8',
+    );
+    expect(baselineSpec).toContain('Two Factor Auth'); // delta was merged
+    expect(baselineSpec).not.toContain('TP_UNMERGED_MARKER');
+    expect(baselineSpec).not.toContain('test-plan');
+    expect(baselineSpec).not.toContain('[my-change-T1]');
+
+    // 3. The archived test-plan must use the English field names the parser
+    //    recognizes (Input/Expected) — Chinese 输入/预期 would be silently
+    //    dropped, producing empty input/expected on the parsed Case.
+    const parsed = parseTestPlan(movedContent);
+    expect(parsed).toHaveLength(1);
+    expect(parsed[0].input).toBe('enable2FA()');
+    expect(parsed[0].expected).toBe('requires OTP');
   });
 });

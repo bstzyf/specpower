@@ -1,0 +1,18 @@
+schema: specpower
+version: 0.2.3-5
+
+# Project context
+context: |
+  This is the specpower repository itself — dogfooding specpower on its own codebase.
+  Tech stack: TypeScript (Node.js >= 20.19), ESM, tsc, vitest; runtime deps
+  commander/zod/js-yaml/chalk.
+  Layout: src/cli/commands (init, sync, config, change-*, instructions, validate),
+  src/core (tools, validation, artifact-graph, parsers, templates), src/utils;
+  bin/ + dist/ for the CLI; skills/prompts/schemas/templates shipped in the package.
+
+# Custom rule includes: directories whose files may be referenced from
+# custom/{coding,review}/*.md via `!include <rel-from-project-root>`.
+# Default (always allowed, no config needed): specpower/ + docs/ + arch/ + design/
+# Add more project doc dirs here (e.g. wiki/):
+# custom:
+#   include-roots: [wiki/]

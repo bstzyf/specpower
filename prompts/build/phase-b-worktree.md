@@ -114,6 +114,29 @@ if [ -f pyproject.toml ]; then poetry install; fi
 if [ -f go.mod ]; then go mod download; fi
 ```
 
+#### 3.5 Regenerate specpower assets (gitignored, not in the worktree)
+
+specpower's regeneratable assets — `specpower/custom/`, `.claude/specpower/prompts/`,
+`.claude/specpower/schemas/`, `.claude/specpower/templates/` — are `.gitignore`d
+and therefore **absent from a fresh worktree**. The controller, implementer, and
+reviewer all read these at relative paths from the worktree cwd, so they MUST be
+regenerated before any task runs.
+
+```bash
+# Only if this is a specpower project (config.yaml is tracked, so it exists in
+# the worktree). sync re-creates all gitignored specpower assets here in place.
+if [ -f specpower/config.yaml ] && command -v specpower >/dev/null 2>&1; then
+  specpower sync
+fi
+```
+
+If `specpower` is not on PATH or `specpower/config.yaml` is absent, skip silently
+(the worktree is not a specpower project; nothing to regenerate).
+
+**Why critical:** without this, build Phase B in the worktree cannot read its own
+prompts (`phase-b-execute.md` etc.) nor `specpower/custom/` team rules — every
+subagent dispatch would silently miss them.
+
 ### 4. Verify Clean Baseline
 
 Run tests to ensure worktree starts clean:

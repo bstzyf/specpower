@@ -37,6 +37,7 @@ of them in the impact analysis.
 | Open question that cannot be resolved in this round           | `design.md` (`## Open Questions`) |
 | Task structure implications (add/remove/reorganize groups)    | `tasks.md`                    |
 | Task ordering / dependency change                             | `tasks.md`                    |
+| Test-case add/merge/edit (preserve `id:` + scenarioRef)        | `test-plan.md`                |
 | Change splits into multiple changes                           | Stop; raise with user before writing anything |
 
 If the discussion implies a cascade (e.g., new capability → new spec file → new task
@@ -132,6 +133,17 @@ Must stay **coarse-grained**:
 
 Coarse granularity is deliberate: refine is about direction, build Phase A is about
 execution precision.
+
+### `test-plan.md`
+
+- Preserve `## Capability:` / `### Requirement: <req> → Scenario: <scen>` structure and
+  `- **Case** <id>:` lines.
+- Existing `id:` values MUST NOT be renumbered or reused; assign the next unused `T<n>`
+  to new Cases.
+- Each Case must have a scenarioRef (delta or baseline), a `[positive]`/`[negative]` mark,
+  and Input/Expected/`it()`.
+- After edits, run `specpower validate <spec>` to confirm coverage (every delta Scenario
+  ≥1 Case; required negatives present; no dangling/orphan/duplicate).
 
 ## Post-update Validation
 

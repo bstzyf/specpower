@@ -76,13 +76,17 @@ function blockToMarkdown(block: RequirementBlock): string {
 /**
  * Remove a requirement block from the lines array by name.
  * Returns a new array without the block, trimming excess blank lines.
+ *
+ * @throws When no requirement with the given name exists (strict mode).
+ *         A REMOVED operation targeting a non-existent requirement is a spec
+ *         inconsistency — failing loudly prevents silent data loss.
  */
 function removeBlock(lines: readonly string[], name: string): readonly string[] {
   const spans = findBlockSpans(lines);
   const target = spans.find((s) => s.name === name);
 
   if (!target) {
-    return lines;
+    throw new Error(`Requirement "${name}" not found in main spec for REMOVED operation`);
   }
 
   const before = lines.slice(0, target.startIndex);
@@ -106,6 +110,8 @@ function removeBlock(lines: readonly string[], name: string): readonly string[] 
 /**
  * Replace a requirement block's content in the lines array.
  * Returns a new array with the block replaced.
+ *
+ * @throws When no requirement with the given name exists (strict mode).
  */
 function replaceBlock(
   lines: readonly string[],
@@ -116,7 +122,7 @@ function replaceBlock(
   const target = spans.find((s) => s.name === name);
 
   if (!target) {
-    throw new Error(`Requirement "${name}" not found in main spec`);
+    throw new Error(`Requirement "${name}" not found in main spec for MODIFIED operation`);
   }
 
   const before = lines.slice(0, target.startIndex);
@@ -129,12 +135,25 @@ function replaceBlock(
 /**
  * Rename a requirement header in the lines array.
  * Returns a new array with the header renamed.
+ *
+ * @throws When no requirement with the FROM name exists (strict mode).
+ *         A RENAMED operation targeting a non-existent requirement is a spec
+ *         inconsistency — failing loudly prevents silent no-ops.
  */
 function renameBlock(
   lines: readonly string[],
   fromName: string,
   toName: string,
 ): readonly string[] {
+  const spans = findBlockSpans(lines);
+  const exists = spans.some((s) => s.name === fromName);
+
+  if (!exists) {
+    throw new Error(
+      `Requirement "${fromName}" not found in main spec for RENAMED operation`,
+    );
+  }
+
   return lines.map((line) => {
     const match = REQUIREMENT_HEADER.exec(line);
     if (match && match[1].trim() === fromName) {
@@ -146,11 +165,24 @@ function renameBlock(
 
 /**
  * Append a requirement block to the end of the lines array.
+ *
+ * @throws When a requirement with the same name already exists (strict mode).
+ *         An ADDED operation for an existing requirement is a spec
+ *         inconsistency — failing loudly prevents silent duplicates.
  */
 function appendBlock(
   lines: readonly string[],
   block: RequirementBlock,
 ): readonly string[] {
+  const spans = findBlockSpans(lines);
+  const duplicate = spans.some((s) => s.name === block.name);
+
+  if (duplicate) {
+    throw new Error(
+      `Requirement "${block.name}" already exists in main spec; ADDED would create a duplicate`,
+    );
+  }
+
   const trimmed = trimTrailingBlanks([...lines]);
   const markdown = blockToMarkdown(block);
 
@@ -186,10 +218,19 @@ function trimLeadingBlanks(lines: readonly string[]): string[] {
  * 3. MODIFIED - replace requirement blocks
  * 4. ADDED - append new requirement blocks
  *
+ * Strict validation: every operation must target a requirement state consistent
+ * with the main spec. Specifically:
+ * - RENAMED: the FROM name MUST exist
+ * - REMOVED: the target name MUST exist
+ * - MODIFIED: the target name MUST exist
+ * - ADDED: the target name MUST NOT already exist
+ * Violations throw an Error — silent no-ops and silent duplicates are not permitted.
+ *
  * @param mainSpecContent - The raw markdown of the main spec
  * @param deltaContent - The raw markdown of the delta spec
  * @returns The updated main spec markdown
- * @throws When a MODIFIED target does not exist in the main spec
+ * @throws When any operation targets an inconsistent requirement state
+ *         (non-existent for RENAMED/REMOVED/MODIFIED, or already-existing for ADDED)
  */
 export function applyDeltaSpec(mainSpecContent: string, deltaContent: string): string {
   const delta = parseDeltaSpec(deltaContent);

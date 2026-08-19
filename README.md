@@ -80,6 +80,28 @@ npm unlink -g specpower
 
 ## 在项目中使用
 
+### 选择目标 AI 工具（安装时一次）
+
+默认 skills 输出到 `.claude/`（Claude Code）。换用别的 AI 工具时，安装后跑一次 `specpower config` 选定目标工具，之后 `init`/`sync` 都按该工具的目录与格式生成：
+
+```bash
+specpower config set tool opencode   # 或 cac / chrys；默认 claude
+specpower config list                 # 列出支持的工具并标出当前生效的
+```
+
+支持的工具：
+
+| 工具 | 输出根目录 | 形态 | 状态 |
+|---|---|---|---|
+| `claude`（默认） | `.claude/` | `skills/<dir>/SKILL.md` + `commands/specpower/<cmd>.md` | 稳定 |
+| `opencode` | `.opencode/` | `agent/<dir>.md`（扁平 + 合成 frontmatter）+ `command/<cmd>.md` | 实验性 |
+| `cac` | `.cac/` | 同 claude 布局，根目录换 `.cac/` | 实验性 |
+| `chrys` | `.agents/` | 同 claude 布局，根目录换 `.agents/` | 实验性 |
+
+工具选择持久化在 `~/.specpower/config.json`；也可用 `SPECPOWER_TOOL=opencode`（或 `cac`/`chrys`）环境变量临时覆盖（主要用于 CI/测试）。一次只生成一种工具；切换工具重跑 `specpower sync` 即可刷新。
+
+> ⚠️ opencode/cac/chrys 是 best-effort：开发环境无法抓取它们的官方文档，frontmatter 字段（`mode`/`tools`）与 cac/chrys 的加载器按已知约定实现。适配器层把每个工具的格式隔离开，修正只需改一个文件。请用真实的工具跑一次 init 后确认格式匹配。
+
 ### 初始化（每个项目一次）
 
 ```bash
@@ -89,13 +111,34 @@ specpower init
 
 这一步会：
 - 创建 `specpower/` 目录（存放 specs 和 changes）
-- 写入 `specpower/config.yaml`（项目上下文）
-- 在 `.claude/skills/specpower-*/` 生成 10 个技能文件
-- 在 `.claude/commands/specpower/` 生成 10 个斜杠命令别名
-- 在 `.claude/specpower/` 拷贝 prompts、schemas、templates
-- **自动追加** `.gitignore`，忽略可再生的 prompts/schemas/templates（幂等，不覆盖已有内容）
+- 写入 `specpower/config.yaml`（项目上下文 + `version:` 记录初始化时的包版本）
+- 按当前工具生成 10 个技能文件（`.claude/skills/specpower-*/SKILL.md` / `.opencode/agent/*.md` / `.cac/skills/...` / `.agents/skills/...`）
+- 生成 10 个斜杠命令别名（`.claude/commands/specpower/` / `.opencode/command/` / `.cac/commands/specpower/` / `.agents/commands/specpower/`）
+- 在 `<rootDir>/specpower/` 拷贝 prompts、schemas、templates
+- **自动追加** `.gitignore`，忽略该工具根下可再生的 prompts/schemas/templates（幂等，不覆盖已有内容）
 
-init 后，打开 Claude Code 会话，斜杠命令 `/specpower:*` 立即可用。
+init 后，打开对应 AI 工具的会话，斜杠命令 `/specpower:*` 立即可用。
+
+### 重复 init 会按版本漂移提示 sync
+
+`init` 写入 `config.yaml` 时会盖一个 `version:` 戳（初始化时安装的包版本）。重复执行 `init` 时，它检测到项目已初始化后，会比较**当前安装的包版本**与 `config.yaml` 里记录的版本：
+
+| 安装包 vs 记录版本 | 行为 |
+|---|---|
+| 相等（`equal`） | 不做事，直接提示"已初始化" |
+| 更新（`newer`） | 提示「是否运行 sync 刷新 skills？」——TTY 下交互 `[y/N]`，非 TTY（CI/管道）自动**不阻塞**、只打印提示 |
+| 未记录（`unknown`，老版本 init 的项目无 `version:` 字段） | 同 newer，提示 sync 以补盖版本戳 |
+| 更旧（`older`，装了旧版包） | 仅警告，**不自动 sync**（向下同步会让 skills 回退），建议重装匹配版本 |
+
+确认 sync 后，init 会调用 `specpower sync`（项目级）刷新 `.claude/` 资产并把 `config.yaml` 的 `version:` **外科手术式更新**为当前版本（保留注释），于是下次 init 看到 `equal`、不再重复提示。
+
+非交互场景一键接受：
+
+```bash
+specpower init -y      # 已初始化且装了新版时，直接 sync，不问
+```
+
+> 注意：交互提示仅在 stdin 是 TTY 时出现；CI/脚本里要么用 `init -y`，要么单独跑 `specpower sync`。
 
 ### 重新初始化
 
@@ -106,6 +149,32 @@ specpower init
 ```
 
 （init 检测到已初始化会拒绝运行，避免误覆盖）
+
+### 升级时同步 skills：`specpower sync`
+
+`npm install -g specpower@latest` 只更新**全局包**里的 skills，不会自动改写你项目里那份 `init` 时拷贝的副本（那是静态文件）。要让新版本的 skills 生效，跑一次 `specpower sync`：
+
+```bash
+npm install -g specpower@latest   # 更新全局包
+specpower sync                    # 把新 skills 刷进当前项目，再 commit
+```
+
+`sync` 是**无守门**的强制刷新（不受"已初始化"拦截），会覆盖 `.claude/skills/specpower-*`、`.claude/commands/specpower/*`，并**清理已废弃**的旧技能目录/命令文件（被新版本删掉或改名的）。项目级（默认）还会一并刷新 `.claude/specpower/` 下的 prompts/schemas/templates，并把 `config.yaml` 的 `version:` 戳更新为当前包版本（保留注释），使下次 `init` 看到 `equal`、不再提示 sync。
+
+#### 两种安装模型
+
+sync 支持两种作用域，对应"skills 放哪一层"的两种取舍：
+
+| 模型 | 命令 | skills 写到 | 适用 |
+|---|---|---|---|
+| **C 项目级**（默认） | `specpower sync` | `<项目>/.claude/` | skills 进 git 团队共享、每项目可锁版本；升级后需 sync 再 commit |
+| **B 用户级** | `specpower sync --user` | `~/.claude/` | 个人多项目统一用最新版，不进 git、全机生效 |
+
+**C（项目级）**：skills 和 prompts 都在项目 `.claude/`，SKILL.md 里的 prompt 引用保持相对路径（`.claude/specpower/prompts/...`），按项目 cwd 解析。流程：`init`（一次）→ 升级 → `sync` → commit。
+
+**B（用户级）**：skills 装到 `~/.claude/skills/`，所有项目共用一份；`sync --user` 会把 SKILL.md 里的 prompt 引用**重写**为指向全局包的绝对路径（`<全局包>/prompts/...`），所以 prompts 不再逐用户拷贝，直接随 `npm install -g` 更新。注意：用户级 skills 不进 git，团队各人各自 `sync --user`；且全机所有项目统一吃同一版本，无法按项目锁版本。
+
+> 选哪种？要 skills 进仓库给团队共享、按项目锁版本 → C；个人多项目、想升级即生效、不靠 git 同步 → B。
 
 ---
 
@@ -150,6 +219,10 @@ specpower init
 - **refine 内部多轮循环**：至少 2 轮，AI 语义判断收敛，不设上限；每轮显式执行 4 个挑战行为（挑战假设 / 提新 options / 探边界 / 质疑 scope）；可更新任意 artifact
 - **build Phase A 改为 rewrite**：不再是"生成" tasks.md，而是基于 refine 稳定后的 artifact 用 Superpowers writing-plans 严格规则"精化"重写；发现 design 缺漏即停并回 refine
 - **`.specpower.yaml` 新增 `phase` 字段**：追踪变更生命周期（`plan` / `refined` / `built` / `archived`）；`specpower change archive` 默认要求 `phase=built`，可用 `--force` 跳过守门
+
+### test-plan.md（代码前的自然语言用例）
+
+每个含 delta scenario 的 change 在 plan Stage 5b 生成 `test-plan.md`（与 proposal/specs/design/tasks 并列的第 5 个 artifact）：从 spec scenario 派生具体用例（正/负标记 + 输入/预期 + 计划 `it()` 名 + 稳定唯一 `id:`），代码前先写、refine 迭代、build Phase B 照它写 `it()`（测试名嵌全局唯一 token `[<changeName>-<id>]`）、verify 两步覆盖校验、done 归档（不合并 baseline）。`specpower validate` 强制每 scenario ≥1 用例 + 负用例；`specpower rename-scenario` 原子改 baseline 场景名并同步所有 test-plan 引用。详见 `CONTRIBUTING.md`。
 
 ---
 
@@ -260,7 +333,7 @@ specpower init
 
 | 命令 | 说明 |
 |---|---|
-| `specpower init` | 初始化项目（生成目录、技能、prompts） |
+| `specpower init` | 初始化项目（生成目录、技能、prompts、custom 团队规则） |
 | `specpower change new <名称>` | 创建新的变更 |
 | `specpower change status <名称>` | 查看变更的 artifact 完成状态 |
 | `specpower change archive <名称>` | 归档变更（delta merge + 移入 archive） |
@@ -268,6 +341,62 @@ specpower init
 | `specpower instructions <artifact> <change>` | 查看某个 artifact 的创建指令 |
 
 CLI 命令会从当前目录**向上查找**项目根（找 `specpower/config.yaml`），类似 `git` 的行为。在项目任意子目录下运行都能工作。
+
+### 项目定制层（公司/工程定制规则）
+
+各公司、各工程都有自己的定制规则。specpower 把它们分两处放，由团队统一制作后随包分发到各项目，贯彻团队意志——项目不自写、随版本刷新。
+
+- `custom/coding/` —— **生成代码**时读（`/specpower:build` implementer、`/specpower:fix`）：命名、架构、错误处理、测试规范等"写代码要遵守"的规则
+- `custom/review/` —— **检视代码**时读（`/specpower:review`）：必须项、禁用项、风格等"检视者要标记"的规则
+
+两处都可放任意数量 `.md` 文件，目录里所有**顶层** `.md`（忽略子目录和非 `.md`）按**字典序**依次读取应用；用零填充数字前缀（`01-`、`02-`、`10-`）控制顺序（字典序下 `10-` 排在 `2-` 前，须零填充保自然数序）。每条规则可标严重度 `[Critical]` / `[Important]` / `[Minor]`（默认 Important）。
+
+作为**叠加层**——额外维度，叠加在内置 checklist 之上，不替换；项目约定类冲突 custom 优先，安全/正确性内置恒生效；目录空/不存在则行为不变（零破坏性）。
+
+#### 如何做团队定制
+
+1. **团队 fork specpower**（或维护团队定制包源）
+2. 在包根 `custom/coding/` 放生成侧规则 `.md`，在 `custom/review/` 放检视侧规则 `.md`。示例（`custom/review/01-naming.md`）：
+
+   ````markdown
+   ## Naming
+   - [Critical] All functions MUST use camelCase
+   - [Important] TypeScript interfaces MUST be prefixed with `I`
+   ````
+
+3. 发布团队定制包（`npm publish` 或团队 git 仓库）
+
+#### 项目如何消费
+
+1. 项目安装团队定制包：`npm install -g specpower`（团队版本）
+2. 首次 `specpower init`，或升级时 `specpower sync`——把包根 `custom/` 刷到项目 `specpower/custom/`
+3. 团队发新版本后，项目 `npm install -g specpower@latest` + `specpower sync` 刷新
+
+项目 `specpower/custom/` 被 `.gitignore` 忽略、不进 git、随 sync 刷新——项目不自写。
+
+#### 定制如何生效
+
+```
+团队包根 custom/{coding,review}/
+  ↓ npm 发布 / 团队包
+项目安装
+  ↓ specpower init / sync  （copyCustom 清空再拷镜像包根）
+项目 specpower/custom/{coding,review}/   （.gitignore 忽略，不进 git）
+  ↓ /specpower:review / build / fix
+controller dispatch 前 Read custom → 内联进 subagent prompt 占位符
+```
+
+- `specpower init`/`sync` 的 `copyCustom` 把包根 `custom/` **清空再拷**到项目 `specpower/custom/`（镜像包根，团队删的规则项目里不残留）；`.gitignore` 忽略 `specpower/custom/`
+- **controller 内联**（非 subagent 自读）：4 个 prompt 的守卫段是 `[CONTROLLER: ...]` 占位符。controller 在 dispatch implementer/reviewer **之前**，读 `specpower/custom/{coding,review}/` 所有顶层 `.md`（字典序），把拼接文本填进占位符；目录空/不存在则填 `none`（显式缺失，不静默跳过）。规则物理进 subagent prompt 文本，必然被执行——不依赖 subagent 主动 Read，也符合 subagent-driven-development 的"provide full text, never make subagent read files"原则
+- **custom md 可复用项目文档**：custom 的 `.md` 支持 `!include <rel-from-project-root>` 整行指令，引用 `docs/`、`arch/` 等既有文档而不复制。`!include` 在 init/sync **烘焙时递归展开成纯文本**（原地写回 specpower/custom/），controller 读到的是展开后文本、不感知 include；沙箱由 `specpower/config.yaml` 的 `custom.include-roots` 声明（`specpower/` 恒允许），配循环检测/深度上限/once 去重/大小与扩展名硬约束。target 缺失或越界**降级为可见注释**（不中断 init/sync，内容不泄露——首次 init 时 config.yaml 还是骨架、roots 未声明）；循环/超限/坏扩展名/绝对路径/目录是结构错误，**抛错中断**（详见 `custom/README.md`）
+
+  | controller 内联点 | 读取的定制目录 |
+  |---|---|
+  | `/specpower:review` dispatch reviewer 前 | `specpower/custom/review/` |
+  | `/specpower:build` dispatch implementer 前、`/specpower:fix` | `specpower/custom/coding/` |
+
+- **worktree 模式**：`specpower/custom/` 与 `.claude/specpower/prompts/` 等被 `.gitignore` 忽略，git worktree 默认不含。`phase-b-worktree` 的 setup 步骤会在 worktree 内跑一次 `specpower sync`（若 `specpower/config.yaml` 存在），把这些 gitignored 资产重新生成到 worktree，使相对路径 `specpower/custom/` 在 worktree cwd 仍可达
+- 路径 `specpower/custom/` 相对项目 cwd，所有 AI 工具（claude/opencode/cac/chrys）一致读取、不被重写
 
 ---
 
@@ -370,7 +499,8 @@ your-project/
 │   │       ├── proposal.md
 │   │       ├── specs/
 │   │       ├── design.md
-│   │       └── tasks.md
+│   │       ├── tasks.md
+│   │       └── test-plan.md  # 自然语言测试用例（代码前先写；引用 spec scenario、带 [change-id] token）
 │   └── changes/archive/    # 归档的变更
 │
 └── .claude/

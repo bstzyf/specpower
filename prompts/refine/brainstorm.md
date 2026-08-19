@@ -195,10 +195,23 @@ to see each behavior fired in the round's output.
   non-functional concerns — because those are the most common omissions.
 - **AI self-prompt**: "What scenarios belong in the specs but are missing? What permission,
   auth, or concurrency case isn't covered? What error/failure mode has no `#### Scenario:`?"
+- **AI self-prompt (negative coverage audit)**: "For each requirement in the specs, does it
+  have at least one **contract-violating** error path scenario (invalid input, null where
+  forbidden, permission denied)? One invalid-state or resource-exhaustion scenario if
+  applicable? Are legitimate-boundary scenarios (empty/extreme/large valid inputs) correctly
+  treated as positive, not miscounted as negative? For side-effect-bearing requirements, is
+  the negative ratio ≥ 30%? For pure-function requirements, 15-30% is healthy — do not pad.
+  See `prompts/reference/specpower/negative-testing-guide.md`."
 - **Sample user-facing question**: "I don't see a scenario for [failure mode / concurrent
   user / permission-denied path]. Should it be added, explicitly excluded, or deferred?"
-- **Expected output per round**: a checklist of boundary scenarios examined, each marked
-  `covered` / `missing → propose adding` / `explicitly out of scope`.
+- **Sample user-facing question (coverage)**: "Requirement [X] has only happy-path
+  scenarios. I'd propose adding [error path / invalid state / resource exhaustion] scenarios
+  to cover contract-violating inputs. Shall I add them?"
+- **Expected output per round**: a checklist of abnormal/error scenarios examined, each marked
+  `covered` / `missing → propose adding` / `explicitly out of scope`, PLUS a per-requirement
+  negative coverage audit marking each requirement as `adequate` / `under-covered → propose
+  N scenarios` / `explicitly out of scope` (with legitimate-boundary scenarios correctly
+  classified as positive).
 
 ### Behavior 4 — question scope
 

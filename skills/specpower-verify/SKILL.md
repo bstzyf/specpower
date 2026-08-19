@@ -40,6 +40,19 @@ Flag any regressions introduced by the change.
 Check that the implementation does not introduce behavior beyond what the delta specs describe.
 Flag any undocumented changes.
 
+### Pass 4: Test-plan coverage (if the change has `test-plan.md`)
+
+Two-step Case→test coverage check:
+
+**Step 1 — omission (reliable, fails hard):** for each Case in `specpower/changes/<name>/test-plan.md`, scan the project's test files (`*.test.*` / `*.spec.*`) for its token `[<changeName>-<id>]`. Any Case whose token is absent → **FAIL** naming the Case (no-omission). Reliable because the token is globally unique and stable.
+
+**Step 2 — Semantic match (deep, fails on mismatch):** for each located `it()`, read the test code and verify its semantics match the Case's definition in `test-plan.md`:
+- (a) the test calls the function-under-test with the Case's `Input`;
+- (b) the test asserts the Case's `Expected` outcome (e.g., Case `Expected: throw /Unknown tool/` ↔ test `.toThrow(/Unknown tool/)`; Case `Expected: return 42` ↔ test `.toBe(42)` or `=== 42`).
+- **FAIL** if the test asserts a *different* outcome than the Case's `Expected` (semantics mismatch — the test does not verify what the plan says it should).
+- **WARN** (not fail) only when you genuinely cannot determine the correspondence (e.g., complex setup, framework-specific idiom, the `it()` body is too indirect to map). State what you could not determine.
+- You ARE judging semantic correspondence here — that is the point of Step 2. Step 1 proved the test exists; Step 2 proves it tests the *right thing*. An `it()` that exercises a different input or asserts a different expectation than the Case is a coverage lie and must FAIL.
+
 ## Stage 3: Report
 
 Present a consolidated verification report:

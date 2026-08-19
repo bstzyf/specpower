@@ -135,6 +135,22 @@ describe('Full change lifecycle', () => {
       'utf-8',
     );
 
+    // test-plan.md (required by the test-plan gate for testable changes)
+    await fs.writeFile(
+      join(changeDir, 'test-plan.md'),
+      [
+        '## Capability: auth',
+        '',
+        '### Requirement: SSO Login → Scenario: SSO provider redirect',
+        '',
+        '- **Case** T1: redirect [positive]',
+        '  - Input: selectSSO()',
+        '  - Expected: redirect to provider',
+        '  - it(): redirects',
+      ].join('\n'),
+      'utf-8',
+    );
+
     const statusAfterAll = await getChangeStatus('test-feature', tmpDir);
 
     // The "scan" artifact generates "specpower/specs/**/*.md" relative to

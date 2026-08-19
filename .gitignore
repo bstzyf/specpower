@@ -6,3 +6,10 @@ dist/
 # Not part of the published package. Contributors who want to use OpenSpec
 # for working on specPower can run `openspec init` locally.
 .claude/
+*.class
+
+# Added by specpower init (regeneratable assets)
+.claude/specpower/prompts/
+.claude/specpower/schemas/
+.claude/specpower/templates/
+# End specpower init

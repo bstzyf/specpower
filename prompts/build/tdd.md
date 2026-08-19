@@ -75,6 +75,16 @@ Write one minimal test showing what should happen.
 - Clear, descriptive name
 - Real code (no mocks unless unavoidable)
 
+**Test classification — cover both positive and negative:**
+- **Positive tests**: verify expected behavior with valid inputs — **including legitimate boundary values** (empty array, single element, extreme values, large inputs). These are positive because the input is within the function's accepted domain, even at its edge.
+- **Negative tests**: verify handling of **abnormal / contract-violating** inputs:
+  - Invalid inputs (wrong type, out-of-range, malformed) — contract violation
+  - null / undefined **where the contract forbids them** — contract violation
+  - Invalid state (operation before init, after close, in wrong phase)
+  - Resource exhaustion to failure (timeout, disk full, connection refused)
+- **Critical distinction**: "empty" / "boundary" / "large" inputs are negative **only if** they violate the contract or trigger abnormal handling. If the function accepts them as valid input, testing correct behavior there is **positive**. See `prompts/reference/specpower/negative-testing-guide.md`.
+- **Target ratio**: ≥ 30% negative for functions with side effects / state / I/O; pure functions with strict contracts may naturally be lower (15-30%) — do NOT pad the ratio by reclassifying legitimate-boundary tests as negative.
+
 ### Verify RED - Watch It Fail
 
 **MANDATORY. Never skip.**
@@ -155,6 +165,7 @@ Before marking a task complete:
 - [ ] Output pristine (no errors, warnings)
 - [ ] Tests use real code (mocks only if unavoidable)
 - [ ] Edge cases and errors covered
+- [ ] Negative test cases cover all contract-violating inputs (null where forbidden, wrong type, invalid state); legitimate-boundary tests (empty/extreme/large) are counted as positive, not negative
 
 ## Common Rationalizations
 

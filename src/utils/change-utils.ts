@@ -1,4 +1,4 @@
-import { promises as fs } from 'node:fs';
+import { promises as fs, existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { readChangeMetadata, writeChangeMetadata as writeMetaInternal } from './change-metadata.js';
 import type { ChangeMetadata, ChangePhase } from './change-metadata.js';
@@ -119,4 +119,34 @@ export async function listChanges(projectRoot: string): Promise<string[]> {
     }
     throw error;
   }
+}
+
+/**
+ * Checks whether a change name is already used — either by an active change
+ * (`specpower/changes/<name>`) or by an archived change
+ * (`specpower/changes/archive/*-<name>`, matched by `^\d{4}-\d{2}-\d{2}-<name>$`).
+ *
+ * The test-plan token prefix `[<changeName>-<id>]` depends on the change name
+ * being globally unique, so reuse (active or archived) must be rejected.
+ *
+ * @param name - The change name to check (assumed already validated)
+ * @param projectRoot - Absolute path to the project root
+ * @returns true if the name is already in use (active or archived)
+ */
+export function isChangeNameUsed(name: string, projectRoot: string): boolean {
+  const active = join(projectRoot, 'specpower', 'changes', name);
+  if (existsSync(active)) return true;
+  const archiveDir = join(projectRoot, 'specpower', 'changes', 'archive');
+  if (!existsSync(archiveDir)) return false;
+  const entries = readdirSync(archiveDir);
+  // 归档目录名格式 YYYY-MM-DD-<name>；必须精确匹配，避免 "bar" 误匹配 "2026-01-01-foo-bar"
+  const re = new RegExp(`^\\d{4}-\\d{2}-\\d{2}-${escapeRegExp(name)}$`);
+  return entries.some((e) => re.test(e) && existsSync(join(archiveDir, e)));
+}
+
+/**
+ * Escape special regex characters in a string for use in a RegExp constructor.
+ */
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }

@@ -19,6 +19,40 @@ templates/               Artifact templates (proposal, spec, design, tasks)
 test/                    Vitest test files mirroring src/ structure
 ```
 
+## How to Write `test-plan.md`
+
+A change with at least one delta Scenario gets a `test-plan.md` (generated at
+plan Stage 5b, iterated in refine, consumed by build Phase B, coverage-checked by
+verify, archived by done — never merged into `specpower/specs/`).
+
+Format (see `templates/test-plan.md`):
+
+```markdown
+## Capability: <cap>
+
+### Requirement: <req> → Scenario: <scenario name>
+
+- **Case** T1: <description> [positive]
+  - Input: <input>
+  - Expected: <result>
+  - it(): <planned test name>
+```
+
+Rules:
+- **Reference Scenarios by name** (delta or baseline) — do not copy WHEN/THEN.
+- **Stable, change-unique `id:`** (`T1`, `T2`, …). Never renumber or reuse ids;
+  on regeneration, read the old file and preserve existing ids.
+- **Token in test code** is globally unique: `[<changeName>-<id>]`
+  (e.g. `it('throws on unknown [add-test-plan-artifact-T3]', …)`), so verify can
+  link cases across coexisting changes without collision.
+- **Coverage**: every delta Scenario ≥1 Case; every failure-admitting
+  Requirement ≥1 `[negative]` Case (contract-violating/abnormal). Legitimate
+  boundary values the contract accepts are `[positive]`.
+- After edits, run `specpower validate specpower/changes/<name>/specs/<cap>/spec.md`
+  to confirm coverage.
+- Change names must be globally unique (active + archived) — `change new`
+  rejects reuse, because the token prefix depends on it.
+
 ## How to Update Prompts
 
 Prompt files live in `prompts/` and are referenced by SKILL.md files using

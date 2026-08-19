@@ -62,6 +62,16 @@ Read the file at `.claude/specpower/prompts/plan/tasks-draft.md` and follow its 
 
 Generate `tasks.md` inside the change directory. Produce a substantive first-iteration task breakdown (3–8 tasks typical), ordered with dependencies. Do not write placeholders like "TBD" or "implement feature". `/specpower:build` Phase A will rewrite this file under strict writing-plans rules, but this first draft feeds both `/specpower:refine` context and Phase A analysis.
 
+**No gate here.** Continue directly to Stage 5b.
+
+## Stage 5b: Generate test-plan (first-iteration)
+
+Read the file at `.claude/specpower/prompts/plan/test-plan-draft.md` and follow its instructions.
+
+Generate `specpower/changes/<name>/test-plan.md` from the delta specs' Scenarios. Each delta Scenario → ≥1 Case with a stable `id:` (`T1`, `T2`, …, never renumbered); failure-admitting Requirements get ≥1 `[negative]` Case. Cases reference Scenarios by name (do not copy WHEN/THEN). Skip if the change has no delta Scenario and no regression cases (non-testable change).
+
+Run `specpower validate specpower/changes/<name>/specs/<cap>/spec.md` to confirm coverage (every Scenario ≥1 Case; required negatives present).
+
 **No gate here.** Continue directly to Stage 6.
 
 ## Stage 6: Final Review
@@ -72,6 +82,7 @@ Present all four artifacts to the user with clear "first-iteration" labeling:
 - Delta `specs/` under the change directory — the contract
 - `design.md` — **first-iteration draft**; `/specpower:refine` will deepen this across multiple rounds
 - `tasks.md` — **first-iteration draft**; `/specpower:build` Phase A will rewrite this under strict writing-plans rules
+- `test-plan.md` — **first-iteration draft** generated in Stage 5b; `/specpower:build` Phase B will consume it as the TDD spec
 
 Make the iteration expectation explicit: the user should not treat design/tasks as final. They are deliberate first drafts produced so downstream skills have real substance to work with.
 

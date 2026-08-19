@@ -7,9 +7,10 @@
  * - Scenarios must have WHEN and THEN clauses
  * - REMOVED sections must have a Reason
  * - RENAMED sections must have FROM and TO lines
+ * - Warns if requirements lack negative/error-path scenarios
  */
 
-import type { ValidationError, ValidationResult } from './types.js';
+import type { ValidationError, ValidationResult, ValidationWarning } from './types.js';
 import {
   SECTION_HEADER,
   REQUIREMENT_HEADER,
@@ -21,6 +22,67 @@ import {
   FROM_LINE,
   TO_LINE,
 } from './constants.js';
+
+/**
+ * Keywords that suggest a scenario is a negative/error-path test case.
+ * These are checked against scenario names (after "Scenario:").
+ *
+ * Only UNAMBIGUOUS abnormal-handling keywords are included. Ambiguous terms
+ * like "empty", "null", "boundary", "limit", "overflow" are intentionally
+ * EXCLUDED because they also appear in legitimate-input scenarios (e.g.,
+ * "Empty array returns empty" is a positive test — empty is a valid input).
+ * Whether such a scenario is positive or negative depends on the function's
+ * contract, which the validator cannot determine syntactically.
+ *
+ * See prompts/reference/specpower/negative-testing-guide.md for the
+ * context-dependent classification rules.
+ */
+const NEGATIVE_SCENARIO_KEYWORDS = [
+  'error',
+  'fail',
+  'invalid',
+  'missing',
+  'reject',
+  'refuse',
+  'deny',
+  'denied',
+  'exceed',
+  'timeout',
+  'exhaust',
+  'malform',
+  'corrupt',
+  'wrong',
+  'incorrect',
+  'unauthorized',
+  'forbidden',
+  'conflict',
+  'duplicate',
+  'nonexistent',
+  'not found',
+  'not exist',
+  'does not exist',
+  'cannot',
+  "can't",
+  'unavailable',
+  'out of range',
+  'before init',
+  'after close',
+  'wrong state',
+  'wrong phase',
+  'throws',
+  'exception',
+];
+
+/**
+ * Check if a scenario name suggests a negative/error-path test case.
+ * Only unambiguous abnormal-handling keywords count; legitimate-boundary
+ * scenarios (empty input, extreme values, large input) are NOT flagged
+ * because they are typically positive tests.
+ */
+function isLikelyNegativeScenario(scenarioName: string): boolean {
+  const lower = scenarioName.toLowerCase();
+  return NEGATIVE_SCENARIO_KEYWORDS.some((kw) => lower.includes(kw));
+}
 
 interface SectionSpan {
   readonly kind: 'ADDED' | 'MODIFIED' | 'REMOVED' | 'RENAMED';
@@ -57,9 +119,17 @@ function splitIntoSections(allLines: readonly string[]): readonly SectionSpan[] 
   return sections;
 }
 
+interface RequirementCoverage {
+  readonly name: string;
+  readonly line: number;
+  readonly totalScenarios: number;
+  readonly negativeScenarios: number;
+}
+
 function validateRequirementSection(
   section: SectionSpan,
   errors: ValidationError[],
+  coverageTracker: RequirementCoverage[],
 ): void {
   const { lines, startLine } = section;
 
@@ -100,6 +170,7 @@ function validateRequirementSection(
   let currentReqName: string | null = null;
   let currentReqLine = 0;
   let scenarioCount = 0;
+  let negativeCount = 0;
   let scenariosForCurrent: { name: string; line: number; hasWhen: boolean; hasThen: boolean }[] = [];
 
   const flushReq = (): void => {
@@ -124,6 +195,13 @@ function validateRequirementSection(
           });
         }
       }
+      // Track coverage for negative-scenario warning
+      coverageTracker.push({
+        name: currentReqName,
+        line: currentReqLine,
+        totalScenarios: scenarioCount,
+        negativeScenarios: negativeCount,
+      });
     }
   };
 
@@ -144,6 +222,7 @@ function validateRequirementSection(
       currentReqName = reqMatch[1].trim();
       currentReqLine = lineNum;
       scenarioCount = 0;
+      negativeCount = 0;
       scenariosForCurrent = [];
       continue;
     }
@@ -154,7 +233,11 @@ function validateRequirementSection(
         scenariosForCurrent.push(currentScenario);
       }
       scenarioCount++;
-      currentScenario = { name: scMatch[1].trim(), line: lineNum, hasWhen: false, hasThen: false };
+      const scenarioName = scMatch[1].trim();
+      if (isLikelyNegativeScenario(scenarioName)) {
+        negativeCount++;
+      }
+      currentScenario = { name: scenarioName, line: lineNum, hasWhen: false, hasThen: false };
       continue;
     }
 
@@ -278,14 +361,17 @@ function validateRenamedSection(
  * - Scenarios must use #### heading level
  * - REMOVED requirements must have a Reason
  * - RENAMED entries must have FROM and TO
+ * - Warns if requirements lack negative/error-path scenarios
  *
  * @param content - The raw markdown content of a delta spec
- * @returns A ValidationResult with valid flag and any errors found
+ * @returns A ValidationResult with valid flag, errors, and warnings
  */
 export function validateSpec(content: string): ValidationResult {
   const normalized = content.replace(/\r\n?/g, '\n');
   const allLines = normalized.split('\n');
   const errors: ValidationError[] = [];
+  const warnings: ValidationWarning[] = [];
+  const coverageTracker: RequirementCoverage[] = [];
 
   const sections = splitIntoSections(allLines);
 
@@ -293,7 +379,7 @@ export function validateSpec(content: string): ValidationResult {
     switch (section.kind) {
       case 'ADDED':
       case 'MODIFIED':
-        validateRequirementSection(section, errors);
+        validateRequirementSection(section, errors, coverageTracker);
         break;
       case 'REMOVED':
         validateRemovedSection(section, errors);
@@ -304,8 +390,24 @@ export function validateSpec(content: string): ValidationResult {
     }
   }
 
+  // Generate warnings for requirements lacking any negative/error-path scenario.
+  // Note: we only warn when there are ZERO negative scenarios — we do NOT warn
+  // on ratio, because whether a scenario is positive or negative depends on the
+  // function's contract (legitimate boundary values are positive), which the
+  // validator cannot determine syntactically. Ratio auditing is left to
+  // code review / refine, guided by negative-testing-guide.md.
+  for (const req of coverageTracker) {
+    if (req.totalScenarios > 0 && req.negativeScenarios === 0) {
+      warnings.push({
+        message: `Requirement "${req.name}" has no error-path scenarios (rejects/throws/invalid/missing/etc.). Consider adding at least one scenario covering a contract-violating or abnormal input. See negative-testing-guide.md for the positive/negative distinction.`,
+        line: req.line,
+      });
+    }
+  }
+
   return {
     valid: errors.length === 0,
     errors,
+    warnings,
   };
 }
