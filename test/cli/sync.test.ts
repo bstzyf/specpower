@@ -10,6 +10,34 @@ const PACKAGE_ROOT = resolve(import.meta.dirname, '..', '..');
 const DIST_ENTRY = resolve(PACKAGE_ROOT, 'dist', 'cli', 'index.js');
 const distReady = existsSync(DIST_ENTRY);
 
+// --- isolate the user-level specpower config (~/.specpower/config.json) ---
+//
+// `syncAssets` resolves the active tool via `resolveTool()`, which falls back to
+// the persisted user config (`~/.specpower/config.json`) when no
+// `SPECPOWER_TOOL` env override is set. Without isolation, a developer whose
+// global config pins a non-claude tool makes the default-scope tests write to
+// `.agents/` instead of the asserted `.claude/`. Redirect the home directory
+// to a fresh temp dir for the whole suite so `readUserConfig()` sees no
+// persisted tool → claude default. (Windows resolves home from USERPROFILE;
+// POSIX from HOME.) Restored in afterEach.
+let savedHome: string | undefined;
+let savedUserProfile: string | undefined;
+
+beforeEach(async () => {
+  savedHome = process.env.HOME;
+  savedUserProfile = process.env.USERPROFILE;
+  const isolatedHome = await fs.mkdtemp(join(tmpdir(), 'specpower-test-home-'));
+  process.env.HOME = isolatedHome;
+  process.env.USERPROFILE = isolatedHome;
+});
+
+afterEach(async () => {
+  if (savedHome === undefined) delete process.env.HOME;
+  else process.env.HOME = savedHome;
+  if (savedUserProfile === undefined) delete process.env.USERPROFILE;
+  else process.env.USERPROFILE = savedUserProfile;
+});
+
 /**
  * The user-level sync targets `~/.claude`, which `os.homedir()` resolves via
  * USERPROFILE on Windows and HOME on POSIX. We run `syncAssets` inside a
