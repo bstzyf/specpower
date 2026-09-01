@@ -3,7 +3,8 @@ import { promises as fs, existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
-import { syncAssets, isInsideWorktree } from '../../src/cli/commands/sync.js';
+import { syncAssets, isInsideWorktree, listLinkedWorktrees, resolveToolForProject } from '../../src/cli/commands/sync.js';
+import { resolveTool } from '../../src/core/tools/adapters.js';
 import { initProject, readStoredVersion, readPackageVersion } from '../../src/cli/commands/init.js';
 
 const PACKAGE_ROOT = resolve(import.meta.dirname, '..', '..');
@@ -352,6 +353,17 @@ describe('syncAssets in a git worktree', () => {
     }
   });
 
+  it('isInsideWorktree returns false for the MAIN checkout of a repo (Windows path-normalization)', () => {
+    // Regression: on Windows the old impl compared dirname(resolve(cwd,
+    // --git-common-dir)) against --show-toplevel. resolve() yields backslash
+    // paths while --show-toplevel uses forward slashes, and fs.mkdtemp returns
+    // 8.3 short-name paths (~1) that --show-toplevel reports as long names —
+    // so the two compared strings never matched and the MAIN checkout was
+    // mis-detected as a worktree. `repoDir` is an mkdtemp short-name dir that
+    // has been git-init'd + committed: it is the main checkout, NOT a worktree.
+    expect(isInsideWorktree(repoDir)).toBe(false);
+  });
+
   it('does NOT stamp config.yaml version when syncing inside a worktree', async () => {
     // syncAssets runs copyCustom + bake; if it also stamped, the committed
     // config.yaml would gain a modified `version:` line.
@@ -531,5 +543,139 @@ describe('syncAssets per tool — prompt transform + custom bake', () => {
       'utf-8',
     );
     expect(impl).not.toMatch(/^[ \t]*\[CONTROLLER:[^\]\n]*\][ \t]*$/m);
+  });
+});
+
+// --- worktree asset propagation (Bug A fix) ---
+//
+// Root cause reproduced: `phase-b-worktree.md` step 3.5 runs `specpower sync`
+// (no tool) inside a linked worktree. sync resolves the tool via resolveTool
+// (env -> user config -> claude default). When the user config (or env) pins a
+// tool that differs from the tool layout the project actually uses, sync writes
+// to the wrong root (e.g. user config=chrys writes `.agents/` while the project
+// uses cac and expects `.cac/`), so the host Skill tool finds no skills in the
+// worktree's `.cac/` and "cannot load specpower-verify".
+//
+// Fix: after syncing the main checkout, propagate the assets into every linked
+// git worktree. Each worktree picks its tool by detecting which `<rootDir>`
+// already exists (the layout the project actually uses); fresh worktrees with
+// no rootDir fall back to the main checkout's resolved tool. This makes sync
+// deterministic and shell-independent (no reliance on step 3.5's POSIX bash).
+describe('worktree asset propagation', () => {
+  let repoDir: string;
+  let savedTool: string | undefined;
+
+  beforeEach(async () => {
+    repoDir = await fs.mkdtemp(join(tmpdir(), 'specpower-prop-'));
+    git(['init'], repoDir);
+    git(['config', 'user.email', 'test@example.com'], repoDir);
+    git(['config', 'user.name', 'Specpower Test'], repoDir);
+    // tracked config.yaml so the worktree (and findProjectRoot) sees a project
+    await fs.mkdir(join(repoDir, 'specpower'), { recursive: true });
+    await fs.writeFile(join(repoDir, 'specpower', 'config.yaml'), 'version: 0.0.1\n', 'utf-8');
+    // commit a .cac/ marker in the main checkout so the project layout is cac
+    // (this is what the user actually uses), even though the user config below
+    // pins chrys — the mismatch that triggered the bug.
+    await fs.mkdir(join(repoDir, '.cac'), { recursive: true });
+    await fs.writeFile(join(repoDir, '.cac', '.gitkeep'), '', 'utf-8');
+    git(['add', '.'], repoDir);
+    git(['commit', '-m', 'init'], repoDir);
+    savedTool = process.env.SPECPOWER_TOOL;
+    // pin chrys in the user config (via env) — the WRONG tool for this project
+    process.env.SPECPOWER_TOOL = 'chrys';
+  });
+
+  afterEach(async () => {
+    if (savedTool === undefined) delete process.env.SPECPOWER_TOOL;
+    else process.env.SPECPOWER_TOOL = savedTool;
+    // drop any worktrees before removing the repo dir (Windows file locks)
+    for (const wt of listLinkedWorktrees(repoDir)) {
+      try { git(['worktree', 'remove', '--force', wt], repoDir); } catch { /* */ }
+    }
+    await fs.rm(repoDir, { recursive: true, force: true });
+  });
+
+  it('listLinkedWorktrees enumerates linked worktrees but not the main checkout', () => {
+    expect(listLinkedWorktrees(repoDir)).toEqual([]);
+    const wtA = join(repoDir, 'a');
+    const wtB = join(repoDir, 'b');
+    git(['worktree', 'add', wtA], repoDir);
+    git(['worktree', 'add', wtB], repoDir);
+    // git emits long-name forward-slash paths; mkdtemp's repoDir is an 8.3 short
+    // name that realpathSync does not reliably expand. Compare by the trailing
+    // path segment(s) which are stable and short-name-free.
+    const tail = (p: string): string => p.replace(/\\/g, '/').replace(/\/$/, '').split('/').slice(-1)[0].toLowerCase();
+    const list = listLinkedWorktrees(repoDir).map(tail);
+    expect(list).toHaveLength(2);
+    expect(list).toContain('a');
+    expect(list).toContain('b');
+  });
+
+  it('listLinkedWorktrees is empty outside a git repo', () => {
+    const plain = 'C:/nonexistent-dir-xyz-12345';
+    expect(listLinkedWorktrees(plain)).toEqual([]);
+  });
+
+  it('resolveToolForProject picks the tool whose rootDir already exists', async () => {
+    // .cac/ exists in repoDir -> cac, even though env pins chrys
+    const t = await resolveToolForProject(repoDir);
+    expect(t.id).toBe('cac');
+  });
+
+  it('resolveToolForProject falls back to the given tool when no rootDir exists', async () => {
+    const fresh = await fs.mkdtemp(join(tmpdir(), 'specpower-prop-fresh-'));
+    try {
+      // no <rootDir> present -> falls back to the passed-in fallback tool
+      const fallback = await resolveTool(process.env.SPECPOWER_TOOL);
+      const t = await resolveToolForProject(fresh, fallback);
+      expect(t.id).toBe(fallback.id);
+    } finally {
+      await fs.rm(fresh, { recursive: true, force: true });
+    }
+  });
+
+  it('resolveToolForProject inherits the tool from the main checkout for a fresh worktree with no rootDir', async () => {
+    // Fresh worktree whose tool-root dir is entirely untracked (not committed),
+    // but the main checkout's work tree has .cac/ (untracked, from a prior sync).
+    // The worktree must inherit cac from the main checkout, NOT the user config
+    // (chrys) — the build-step-3.5 fresh-worktree scenario from the bug.
+    const wt = join(repoDir, 'wt-fresh');
+    git(['worktree', 'add', wt], repoDir);
+    // The main checkout committed .cac/.gitkeep (see beforeEach) so wt carries
+    // .cac/. Remove it from the worktree to simulate a fully-untracked rootDir.
+    await fs.rm(join(wt, '.cac'), { recursive: true, force: true });
+    // main checkout still has .cac/ (committed) -> resolveToolForProject(wt)
+    // should detect it via the shared .git and inherit cac.
+    const t = await resolveToolForProject(wt);
+    expect(t.id).toBe('cac');
+  });
+
+  it('syncing the main checkout propagates assets to all linked worktrees at the correct tool root', async () => {
+    const wt = join(repoDir, 'wt');
+    git(['worktree', 'add', wt], repoDir);
+    // fresh worktree: .cac/ (tracked .gitkeep only) exists, but specpower
+    // assets (skills/prompts) do NOT.
+    expect(existsSync(join(wt, '.cac', 'skills', 'specpower-verify', 'SKILL.md'))).toBe(false);
+
+    // sync the MAIN checkout. resolveToolForProject(repoDir) sees .cac/ -> cac,
+    // so main writes to .cac/. After sync, propagation reaches the worktree at
+    // .cac/ too (worktree carries the tracked .cac/ marker -> cac detected),
+    // NOT .agents/ (which env/chrys would otherwise pick).
+    const res = await syncAssets({ projectRoot: repoDir });
+    expect(res.tool).toBe('cac');
+    expect(existsSync(join(repoDir, '.cac', 'skills', 'specpower-verify', 'SKILL.md'))).toBe(true);
+    expect(existsSync(join(wt, '.cac', 'skills', 'specpower-verify', 'SKILL.md'))).toBe(true);
+    expect(existsSync(join(wt, '.cac', 'specpower', 'prompts'))).toBe(true);
+    // the wrong root (.agents/) must NOT have been written into the worktree
+    expect(existsSync(join(wt, '.agents', 'skills'))).toBe(false);
+  });
+
+  it('sync inside a worktree does NOT recurse-propagate (no infinite loop)', async () => {
+    const wt = join(repoDir, 'wt');
+    git(['worktree', 'add', wt], repoDir);
+    // syncing the worktree itself completes without error and without trying
+    // to propagate again from inside it.
+    const res = await syncAssets({ projectRoot: wt });
+    expect(res.status).toBe('synced');
   });
 });

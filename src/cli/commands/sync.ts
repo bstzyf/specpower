@@ -24,6 +24,7 @@
  */
 
 import { promises as fs } from 'node:fs';
+import { existsSync } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
 import { execSync } from 'node:child_process';
 import { homedir } from 'node:os';
@@ -41,7 +42,7 @@ import {
 } from './init.js';
 import { bakeCustomIncludes } from './custom-bake.js';
 import type { ToolAdapter, ToolId } from '../../core/tools/types.js';
-import { resolveTool, maybeToolHint } from '../../core/tools/adapters.js';
+import { resolveTool, maybeToolHint, allAdapters } from '../../core/tools/adapters.js';
 
 /**
  * Options for {@link syncAssets}.
@@ -54,6 +55,21 @@ export interface SyncOptions {
    * Exposed for tests; the CLI action leaves it unset.
    */
   readonly projectRoot?: string;
+  /**
+   * Force a specific tool adapter (project scope). When unset, project-scope
+   * sync resolves the tool via {@link resolveToolForProject} (detects the
+   * existing `<rootDir>` layout, falling back to `resolveTool`). Used by
+   * {@link propagateToWorktrees} to pin the main checkout's tool for fresh
+   * worktrees that have no rootDir of their own.
+   */
+  readonly tool?: ToolAdapter;
+  /**
+   * Internal: when false, skip the post-sync worktree propagation step. Set to
+   * `false` by {@link propagateToWorktrees} so the recursive per-worktree sync
+   * calls do not re-propagate (which would loop). External callers leave it
+   * unset (default `true`).
+   */
+  readonly _propagate?: boolean;
 }
 
 /**
@@ -79,11 +95,24 @@ const SPECPOWER_SKILL_PREFIX = 'specpower-';
 
 /**
  * Detects whether `cwd` lives inside a **linked** git worktree (rather than
- * the repo's own working copy). In a linked worktree, `git rev-parse
- * --git-common-dir` points at the main repo's `.git`, whose parent differs
- * from `--show-toplevel` (the worktree root). In the main repo the two
- * resolve to the same directory; outside any repo git fails and we return
- * false.
+ * the repo's own working copy). In a linked worktree, `git rev-parse --git-dir`
+ * points at the worktree's private `.git/worktrees/<name>` dir while
+ * `--git-common-dir` points at the shared main repo `.git`; the two differ. In
+ * the main checkout both resolve to the same `.git`; outside any repo git fails
+ * and we return false.
+ *
+ * Both paths come from git itself (same normalization style) and are made
+ * absolute against `cwd`, then forward-slash + lower-case normalized before
+ * comparing. This is required on **Windows**, where the previous impl compared
+ * `dirname(resolve(cwd, --git-common-dir))` against `--show-toplevel` and
+ * mis-detected the main checkout as a worktree: `resolve()` yields backslash
+ * paths while `--show-toplevel` uses forward slashes, and `fs.mkdtemp` returns
+ * 8.3 short-name paths (`C:\Users\LIANGK~1\...`) that `--show-toplevel` reports
+ * as long names (`C:/Users/liangkongrong/...`) — `fs.realpathSync` does not
+ * reliably expand short names, so the two compared strings never matched even
+ * in the main repo. Comparing two git outputs (`--git-dir` vs
+ * `--git-common-dir`) eliminates both divergence sources because both sides
+ * undergo the identical `resolve(cwd, p)` transformation.
  *
  * Used by {@link syncAssets} to skip {@link stampVersionInConfig} when run
  * inside a worktree — otherwise the stamp would mutate the worktree's
@@ -100,16 +129,137 @@ export function isInsideWorktree(cwd: string = process.cwd()): boolean {
         encoding: 'utf-8',
         stdio: ['pipe', 'pipe', 'pipe'],
       }).trim();
-    const common = run(['rev-parse', '--git-common-dir']);
-    const toplevel = run(['rev-parse', '--show-toplevel']);
-    if (!common || !toplevel) return false;
-    // `--git-common-dir` may be relative (e.g. `.git`) — resolve against cwd
-    // before taking the parent so the comparison is absolute-path-stable.
-    return dirname(resolve(cwd, common)) !== toplevel;
+    const gitDir = run(['rev-parse', '--git-dir']);
+    const commonDir = run(['rev-parse', '--git-common-dir']);
+    if (!gitDir || !commonDir) return false;
+    // Both may be relative (`.git`); resolve against cwd, then normalize
+    // separators + case so the comparison is stable on Windows (backslash vs
+    // forward slash, short vs long names — both sides transformed identically).
+    const norm = (p: string): string =>
+      resolve(cwd, p).replace(/\\/g, '/').toLowerCase();
+    return norm(gitDir) !== norm(commonDir);
   } catch {
     return false;
   }
 }
+
+/**
+ * Enumerate the **linked** git worktrees of the repository containing
+ * `projectRoot`, excluding the main checkout itself. Returns absolute paths.
+ *
+ * Uses `git worktree list --porcelain` (stable, machine-readable). Parses only
+ * `worktree <path>` lines; the main checkout is the first entry emitted by git,
+ * so it is skipped. Outside a git repo (or on any git failure) returns `[]` —
+ * callers treat propagation as best-effort.
+ *
+ * Why: a fresh git worktree contains only tracked files, so specpower's
+ * regenerated assets (skills/prompts/…) absent from the main checkout's tracked
+ * set are missing in each worktree. {@link propagateToWorktrees} uses this list
+ * to sync assets into every worktree after a main-checkout sync, deterministically
+ * and without relying on a shell guard (which is unreliable on Windows — see
+ * {@link isInsideWorktree} and the worktree-skill-loading fix).
+ *
+ * @param projectRoot - A path inside the repository whose worktrees to list.
+ */
+export function listLinkedWorktrees(projectRoot: string): readonly string[] {
+  try {
+    const out = execSync('git worktree list --porcelain', {
+      cwd: projectRoot,
+      encoding: 'utf-8',
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    const worktrees: string[] = [];
+    let first = true;
+    for (const line of out.split(/\r?\n/)) {
+      const m = /^worktree (.+)$/.exec(line);
+      if (!m) continue;
+      if (first) {
+        // git emits the main checkout first; skip it — only linked worktrees
+        // are propagation targets.
+        first = false;
+        continue;
+      }
+      worktrees.push(m[1].trim());
+    }
+    return worktrees;
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Resolve the main checkout's top-level directory for a path that may live
+ * inside a linked git worktree. Returns `null` outside a repo or on any git
+ * failure. Uses `--git-common-dir` (shared across the main checkout and its
+ * linked worktrees) and takes its parent — the main checkout root.
+ */
+function mainCheckoutRoot(cwd: string): string | null {
+  try {
+    const common = execSync('git rev-parse --git-common-dir', {
+      cwd,
+      encoding: 'utf-8',
+      stdio: ['pipe', 'pipe', 'pipe'],
+    }).trim();
+    if (!common) return null;
+    return dirname(resolve(cwd, common));
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Resolve the active tool adapter for a project directory by detecting which
+ * tool's `<rootDir>` already exists on disk, falling back to `resolveTool`
+ * (env `SPECPOWER_TOOL` → user config → claude default) when none exists.
+ *
+ * Why: `syncAssets`/step-3.5 `specpower sync` previously resolved the tool via
+ * `resolveTool` alone, which honors the user config / env. When that persisted
+ * tool differs from the tool layout the project actually uses (e.g. user config
+ * pins `chrys` → `.agents/`, but the project uses `cac` → `.cac/`), sync wrote
+ * to the wrong root and the host Skill tool found no skills there. Detecting
+ * the existing `<rootDir>` makes sync align with the layout the project
+ * actually uses, regardless of the user config.
+ *
+ * A fresh linked worktree has no `<rootDir>` of its own (its regenerated assets
+ * are untracked, so a fresh worktree does not carry them). In that case the
+ * fallback inspects the **main checkout** (the worktree shares the main repo's
+ * `.git`, so its root is derivable via `--git-common-dir`) for an existing
+ * `<rootDir>` — that is the layout the project actually uses, and the worktree
+ * must inherit it rather than the (possibly mismatched) user config. Only when
+ * neither the worktree nor the main checkout has a rootDir does it fall back to
+ * the passed-in `fallback` / `resolveTool()`.
+ *
+ * @param projectRoot - Absolute path to the specpower project root (may be a
+ *   linked worktree).
+ * @param fallback - Adapter to use when no `<rootDir>` exists on disk anywhere
+ *   derivable. Defaults to `resolveTool()`; callers pass the main checkout's
+ *   resolved tool so fresh worktrees inherit it.
+ */
+export async function resolveToolForProject(
+  projectRoot: string,
+  fallback?: ToolAdapter,
+): Promise<ToolAdapter> {
+  // Prefer an adapter whose root dir already exists on disk — that is the
+  // layout the project actually uses.
+  for (const adapter of allAdapters()) {
+    if (existsSync(join(projectRoot, adapter.rootDir))) {
+      return adapter;
+    }
+  }
+  // Fresh worktree: no rootDir here. Inherit from the main checkout (shared
+  // .git) rather than the user config, which may pin a different tool.
+  const mainRoot = mainCheckoutRoot(projectRoot);
+  if (mainRoot && mainRoot !== projectRoot) {
+    for (const adapter of allAdapters()) {
+      if (existsSync(join(mainRoot, adapter.rootDir))) {
+        return adapter;
+      }
+    }
+  }
+  return fallback ?? (await resolveTool(process.env.SPECPOWER_TOOL));
+}
+
+
 
 /**
  * The set of skill dir names the current version ships, e.g. `specpower-plan`.
@@ -209,7 +359,18 @@ export async function syncAssets(
   const scope: 'project' | 'user' = opts.user ? 'user' : 'project';
   const packageRoot = findPackageRoot();
   const projectRoot = opts.projectRoot ?? process.cwd();
-  const tool = await resolveTool(process.env.SPECPOWER_TOOL);
+  // Tool resolution differs by scope:
+  // - user scope: always resolveTool (env → user config → claude); the user
+  //   home has no "existing rootDir" to detect from.
+  // - project scope: honor an explicit opts.tool override (used by worktree
+  //   propagation to pin the main checkout's tool); otherwise detect the
+  //   existing <rootDir> layout so sync aligns with the tool the project
+  //   actually uses, regardless of a mismatched user config (the
+  //   worktree-skill-loading bug root cause).
+  const tool =
+    scope === 'user'
+      ? await resolveTool(process.env.SPECPOWER_TOOL)
+      : opts.tool ?? (await resolveToolForProject(projectRoot));
   const toolRoot =
     scope === 'user'
       ? join(homedir(), tool.rootDir)
@@ -244,6 +405,17 @@ export async function syncAssets(
     // is reconciled the next time sync runs against the main checkout.
     if (!isInsideWorktree(projectRoot)) {
       await stampVersionInConfig(projectRoot, readPackageVersion(packageRoot));
+      // A main-checkout sync is the canonical point to propagate the freshly
+      // synced assets into every linked git worktree: a fresh worktree contains
+      // only tracked files, so regenerated assets (skills/prompts/…) that are
+      // untracked in the main checkout are missing there, and the host Skill
+      // tool cannot discover `specpower-*` skills in the worktree's cwd. Doing
+      // it here (CLI-level, deterministic) avoids relying on a POSIX shell guard
+      // in build's worktree setup, which is unreliable on Windows. Suppressed
+      // when _propagate is false (set by propagateToWorktrees' recursive calls).
+      if (opts._propagate !== false) {
+        await propagateToWorktrees(projectRoot, tool);
+      }
     }
   }
 
@@ -257,6 +429,38 @@ export async function syncAssets(
     removed,
     message: `Synced specpower assets (${scope}, tool: ${tool.id}) to ${toolRoot}.`,
   };
+}
+
+/**
+ * Sync specpower assets into every linked git worktree of `projectRoot`,
+ * using each worktree's detected tool layout (falling back to `mainTool` for
+ * fresh worktrees that have no `<rootDir>` of their own).
+ *
+ * Best-effort and permissive: a failed worktree (e.g. its directory was removed
+ * mid-run) is reported on stdout but never aborts the overall sync, and the
+ * recursive per-worktree syncs run with `_propagate: false` so they do not
+ * re-propagate (no infinite loop).
+ *
+ * @param projectRoot - The main checkout root (a specpower project, NOT a worktree).
+ * @param mainTool - The tool resolved for the main checkout; inherited by fresh
+ *   worktrees that have no rootDir to detect from.
+ */
+async function propagateToWorktrees(
+  projectRoot: string,
+  mainTool: ToolAdapter,
+): Promise<void> {
+  const worktrees = listLinkedWorktrees(projectRoot);
+  for (const wt of worktrees) {
+    try {
+      const wtTool = await resolveToolForProject(wt, mainTool);
+      await syncAssets({ projectRoot: wt, tool: wtTool, _propagate: false });
+    } catch (error: unknown) {
+      // A single broken worktree must not abort the whole sync. Surface it and
+      // continue; the main checkout's sync already succeeded.
+      const msg = error instanceof Error ? error.message : String(error);
+      console.warn(`Warning: could not propagate specpower assets to worktree ${wt}: ${msg}`);
+    }
+  }
 }
 
 /**
